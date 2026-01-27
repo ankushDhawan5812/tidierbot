@@ -15,6 +15,17 @@ import pygame
 from pygame.joystick import Joystick
 from base_controller import Vehicle
 
+# --- CONTROLLER MAP ------------------------ -------------------
+BTN_START   = 10
+BTN_BACK    = 9
+BTN_LB      = 5
+BTN_RB      = 6
+
+AX_LEFT_Y   = 1
+AX_LEFT_X   = 0   # ← left stick X axis  (left/right)
+AX_RIGHT_X  = 2   # ← right stick X axis (spin)
+# ---------------------------------------------------------------
+
 pygame.init()
 
 def apply_deadzone(arr, deadzone_size=0.05):
@@ -33,7 +44,7 @@ class GamepadTeleop:
             pygame.event.pump()
 
             # Start control
-            if not self.vehicle and self.joy.get_button(7):  # 7 is the "Start" button
+            if not self.vehicle and self.joy.get_button(BTN_START):  # Replaced by Ahmed, 6/16/25
                 self.vehicle = Vehicle(max_vel=(1.0, 1.0, 3.14), max_accel=(0.5, 0.5, 2.36))
                 self.vehicle.start_control()
                 last_enabled = False
@@ -41,15 +52,15 @@ class GamepadTeleop:
                 print('Control started')
 
             # Stop control
-            if self.vehicle and self.joy.get_button(6):  # 6 is the "Back" button
+            if self.vehicle and self.joy.get_button(BTN_BACK):  # Replaced by Ahmed, 6/16/25
                 self.vehicle.stop_control()
                 self.vehicle = None
                 print('Control stopped')
 
             if self.vehicle:
                 # Hold down left/right bumper to enable control in local/global frame
-                left_bumper = self.joy.get_button(4)
-                right_bumper = self.joy.get_button(5)
+                left_bumper = self.joy.get_button(BTN_LB)
+                right_bumper = self.joy.get_button(BTN_RB)
                 frame = 'local' if left_bumper else 'global'
                 if left_bumper or right_bumper:
                     if not last_enabled:
@@ -57,18 +68,24 @@ class GamepadTeleop:
                         last_enabled = True
 
                     # Compute unscaled target velocity
-                    x = -self.joy.get_axis(1)  # Left analog stick
-                    y = -self.joy.get_axis(0)  # Left analog stick
-                    th = -self.joy.get_axis(3)  # Right analog stick
+                    x = self.joy.get_axis(AX_LEFT_X)  # Left analog stick
+                    y = -self.joy.get_axis(AX_LEFT_Y)  # Left analog stick
+                    th = -self.joy.get_axis(AX_RIGHT_X)  # Right analog stick
                     target_velocity = np.array([x, y, th])
+
 
                     # Apply deadzone for joystick drift
                     target_velocity = apply_deadzone(target_velocity)
 
                     # Send command to robot
                     target_velocity = self.vehicle.max_vel * target_velocity
+
+                    # print("Commanded velocity:", target_velocity.round(2))
+                    # print("cmd:", target_velocity.round(2), "frame:", frame)
                     self.vehicle.set_target_velocity(target_velocity, frame=frame)
                     # self.vehicle.set_target_position(self.vehicle.x + 1.5 * target_velocity)
+
+
 
                 elif last_enabled:
                     print('Robot disabled')

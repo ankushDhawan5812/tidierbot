@@ -89,7 +89,7 @@ def main(args):
             env = MujocoEnv()
     else:
         from real_env import RealEnv
-        env = RealEnv()
+        env = RealEnv(use_cameras=not args.no_cameras)
 
     # Create policy
     if args.teleop:
@@ -109,5 +109,6 @@ if __name__ == '__main__':
     parser.add_argument('--sim', action='store_true')
     parser.add_argument('--teleop', action='store_true')
     parser.add_argument('--save', action='store_true')
+    parser.add_argument('--no-cameras', action='store_true', help='Disable cameras (real env only)')
     parser.add_argument('--output-dir', default='data/demos')
     main(parser.parse_args())

@@ -8,7 +8,7 @@ from arm_server import ArmManager
 from base_server import BaseManager
 
 class RealEnv:
-    def __init__(self):
+    def __init__(self, use_cameras=True):
         # RPC server connection for base
         base_manager = BaseManager(address=(BASE_RPC_HOST, BASE_RPC_PORT), authkey=RPC_AUTHKEY)
         try:
@@ -28,15 +28,26 @@ class RealEnv:
         self.arm = arm_manager.Arm()
 
         # Cameras
-        self.base_camera = LogitechCamera(BASE_CAMERA_SERIAL)
-        self.wrist_camera = KinovaCamera()
+        self.use_cameras = use_cameras
+        if self.use_cameras:
+            self.base_camera = LogitechCamera(BASE_CAMERA_SERIAL)
+            self.wrist_camera = KinovaCamera()
+        else:
+            print('Cameras disabled - using dummy images')
+            self.base_camera = None
+            self.wrist_camera = None
 
     def get_obs(self):
         obs = {}
         obs.update(self.base.get_state())
         obs.update(self.arm.get_state())
-        obs['base_image'] = self.base_camera.get_image()
-        obs['wrist_image'] = self.wrist_camera.get_image()
+        if self.use_cameras:
+            obs['base_image'] = self.base_camera.get_image()
+            obs['wrist_image'] = self.wrist_camera.get_image()
+        else:
+            # Return dummy/None images when cameras are disabled
+            obs['base_image'] = None
+            obs['wrist_image'] = None
         return obs
 
     def reset(self):
@@ -56,8 +67,9 @@ class RealEnv:
     def close(self):
         self.base.close()
         self.arm.close()
-        self.base_camera.close()
-        self.wrist_camera.close()
+        if self.use_cameras:
+            self.base_camera.close()
+            self.wrist_camera.close()
 
 if __name__ == '__main__':
     import time
