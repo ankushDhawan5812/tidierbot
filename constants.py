@@ -18,18 +18,18 @@ ENCODER_MAGNET_OFFSETS = [-819.0 / 4096, -5758.0 / 4096, 699.0 / 4096, -2687.0 /
 # Teleop and imitation learning
 
 # Base and arm RPC servers
-BASE_RPC_HOST = 'localhost'
+BASE_RPC_HOST = '100.87.168.15'
 BASE_RPC_PORT = 50000
-ARM_RPC_HOST = 'localhost'
+ARM_RPC_HOST = '100.87.168.15'
 ARM_RPC_PORT = 50001
 RPC_AUTHKEY = b'secret password'
 
 # Cameras
-BASE_CAMERA_SERIAL = 'TODO'
+REALSENSE_SERIAL = None  # Set to specific serial if multiple RealSense cameras, or None for first available
 # WRIST_CAMERA_SERIAL = 'TODO'  # Not used by Kinova wrist camera
 
 # Policy
-POLICY_SERVER_HOST = 'localhost'
+POLICY_SERVER_HOST = '100.87.168.15'
 POLICY_SERVER_PORT = 5555
 POLICY_CONTROL_FREQ = 10
 POLICY_CONTROL_PERIOD = 1.0 / POLICY_CONTROL_FREQ

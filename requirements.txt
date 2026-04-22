@@ -3,6 +3,7 @@ numpy==1.26.4
 threadpoolctl==3.5.0  # Limit numpy multithreading
 scipy==1.12.0
 opencv-python==4.9.0.80
+pyrealsense2  # Intel RealSense SDK
 h5py==3.11.0
 tqdm==4.66.2
 notebook==7.1.1

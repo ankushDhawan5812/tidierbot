@@ -171,10 +171,10 @@ def keyboard_teleop(stdscr):
             vx = 0.0
             vy = 0.0
             wz = 0.0
-            if want_left:  vx -= 1.0
-            if want_right: vx += 1.0
-            if want_up:    vy += 1.0
-            if want_down:  vy -= 1.0
+            if want_left:  vy += 1.0
+            if want_right: vy -= 1.0
+            if want_up:    vx += 1.0
+            if want_down:  vx -= 1.0
             if want_ccw:   wz += 1.0
             if want_cw:    wz -= 1.0
 

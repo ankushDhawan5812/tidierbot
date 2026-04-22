@@ -1,9 +1,9 @@
 # Author: Jimmy Wu
 # Date: October 2024
 
-from cameras import KinovaCamera, LogitechCamera
+from cameras import KinovaCamera, RealSenseCamera
 from constants import BASE_RPC_HOST, BASE_RPC_PORT, ARM_RPC_HOST, ARM_RPC_PORT, RPC_AUTHKEY
-from constants import BASE_CAMERA_SERIAL
+from constants import REALSENSE_SERIAL
 from arm_server import ArmManager
 from base_server import BaseManager
 
@@ -30,8 +30,12 @@ class RealEnv:
         # Cameras
         self.use_cameras = use_cameras
         if self.use_cameras:
-            self.base_camera = LogitechCamera(BASE_CAMERA_SERIAL)
+            self.base_camera = RealSenseCamera(REALSENSE_SERIAL)
             self.wrist_camera = KinovaCamera()
+
+            # Start camera streaming server
+            from camera_stream import start_stream_server
+            start_stream_server(self.base_camera, self.wrist_camera)
         else:
             print('Cameras disabled - using dummy images')
             self.base_camera = None
@@ -43,10 +47,12 @@ class RealEnv:
         obs.update(self.arm.get_state())
         if self.use_cameras:
             obs['base_image'] = self.base_camera.get_image()
+            obs['base_depth'] = self.base_camera.get_depth()
             obs['wrist_image'] = self.wrist_camera.get_image()
         else:
             # Return dummy/None images when cameras are disabled
             obs['base_image'] = None
+            obs['base_depth'] = None
             obs['wrist_image'] = None
         return obs
 

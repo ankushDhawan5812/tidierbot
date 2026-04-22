@@ -4,3 +4,8 @@ __pycache__
 *.un~
 *.swp
 *.whl
+*.npz
+*data/
+calibration_images/
+camera_captures/
+*.png

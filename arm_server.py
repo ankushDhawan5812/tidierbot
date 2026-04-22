@@ -1,5 +1,6 @@
 # Author: Jimmy Wu
 # Date: October 2024
+# Modified: Added execute_joint_position, execute_joint_trajectory, set_gripper for cuRobo integration
 #
 # This RPC server allows other processes to communicate with the Kinova arm
 # low-level controller, which runs in its own, dedicated real-time process.
@@ -26,25 +27,30 @@ class Arm:
         self.ik_solver = IKSolver(ee_offset=0.12)
 
     def reset(self):
-        # Stop low-level control
-        if self.arm.cyclic_running:
-            time.sleep(0.75)  # Wait for arm to stop moving
-            self.arm.stop_cyclic()
-
-        # Clear faults
-        self.arm.clear_faults()
-
-        # Reset arm configuration
-        self.arm.open_gripper()
-        self.arm.retract()
-
-        # Create new instance of controller
-        self.controller = JointCompliantController(self.command_queue)
-
-        # Start low-level control
-        self.arm.init_cyclic(self.controller.control_callback)
-        while not self.arm.cyclic_running:
-            time.sleep(0.01)
+        try:
+            # Stop low-level control
+            if self.arm.cyclic_running:
+                time.sleep(0.75)  # Wait for arm to stop moving
+                self.arm.stop_cyclic()
+            # Drain any stale commands from previous trajectory
+            while not self.command_queue.empty():
+                try:
+                    self.command_queue.get_nowait()
+                except queue.Empty:
+                    break
+            # Clear faults
+            self.arm.clear_faults()
+            # Reset arm configuration
+            self.arm.retract()
+            # Create new instance of controller
+            self.controller = JointCompliantController(self.command_queue)
+            # Start low-level control
+            self.arm.init_cyclic(self.controller.control_callback)
+            while not self.arm.cyclic_running:
+                time.sleep(0.01)
+        except Exception as e:
+            import traceback
+            raise RuntimeError(f'Arm reset failed: {traceback.format_exc()}') from None
 
     def execute_action(self, action):
         qpos = self.ik_solver.solve(action['arm_pos'], action['arm_quat'], self.arm.q)
@@ -60,6 +66,55 @@ class Arm:
             'gripper_pos': np.array([self.arm.gripper_pos]),
         }
         return state
+
+    def execute_joint_position(self, qpos, gripper_pos=None):
+        """Send a single joint position command.
+
+        Args:
+            qpos: List of 7 joint angles in radians.
+            gripper_pos: Gripper position 0.0 (open) to 1.0 (closed).
+                If None, maintain current gripper position.
+        """
+        if gripper_pos is None:
+            gripper_pos = self.arm.gripper_pos
+        self.command_queue.put((np.array(qpos), float(gripper_pos)))
+
+    def execute_joint_trajectory(self, positions, dt, gripper_positions=None):
+        """Execute a joint trajectory by streaming waypoints through the command queue.
+
+        Args:
+            positions: List of joint position arrays, each of length 7.
+            dt: Time step between waypoints in seconds.
+            gripper_positions: Optional gripper positions (0.0-1.0).
+                Single float for constant grip, or list with one per waypoint.
+                If None, maintain current gripper position.
+        """
+        n = len(positions)
+        if gripper_positions is None:
+            grip = [self.arm.gripper_pos] * n
+        elif isinstance(gripper_positions, (int, float)):
+            grip = [float(gripper_positions)] * n
+        else:
+            grip = list(gripper_positions)
+        for i in range(n):
+            next_time = time.perf_counter() + dt
+            try:
+                self.command_queue.put_nowait((np.array(positions[i]), grip[i]))
+            except queue.Full:
+                pass  # Skip waypoint if queue full — Ruckig is still tracking
+            sleep_time = next_time - time.perf_counter()
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
+    def set_gripper(self, gripper_pos, wait_time=1.0):
+        """Set gripper position while keeping arm in place.
+
+        Args:
+            gripper_pos: 0.0 (open) to 1.0 (closed).
+            wait_time: Seconds to wait for gripper to reach position.
+        """
+        self.command_queue.put((self.arm.q.copy(), float(gripper_pos)))
+        time.sleep(wait_time)
 
     def close(self):
         if self.arm.cyclic_running:
@@ -77,20 +132,3 @@ if __name__ == '__main__':
     server = manager.get_server()
     print(f'Arm manager server started at {ARM_RPC_HOST}:{ARM_RPC_PORT}')
     server.serve_forever()
-    # import numpy as np
-    # from constants import POLICY_CONTROL_PERIOD
-    # manager = ArmManager(address=(ARM_RPC_HOST, ARM_RPC_PORT), authkey=RPC_AUTHKEY)
-    # manager.connect()
-    # arm = manager.Arm()
-    # try:
-    #     arm.reset()
-    #     for i in range(50):
-    #         arm.execute_action({
-    #             'arm_pos': np.array([0.135, 0.002, 0.211]),
-    #             'arm_quat': np.array([0.706, 0.707, 0.029, 0.029]),
-    #             'gripper_pos': np.zeros(1),
-    #         })
-    #         print(arm.get_state())
-    #         time.sleep(POLICY_CONTROL_PERIOD)  # Note: Not precise
-    # finally:
-    #     arm.close()

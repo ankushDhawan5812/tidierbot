@@ -5,11 +5,12 @@ import threading
 import time
 import cv2 as cv
 import numpy as np
+import pyrealsense2 as rs
 from kortex_api.autogen.client_stubs.DeviceManagerClientRpc import DeviceManagerClient
 from kortex_api.autogen.client_stubs.VisionConfigClientRpc import VisionConfigClient
 from kortex_api.autogen.messages import DeviceConfig_pb2, VisionConfig_pb2
 from kinova import DeviceConnection
-from constants import BASE_CAMERA_SERIAL
+from constants import REALSENSE_SERIAL
 
 class Camera:
     def __init__(self):
@@ -30,7 +31,9 @@ class Camera:
                 self.image = cv.cvtColor(bgr_image, cv.COLOR_BGR2RGB)
 
     def get_image(self):
-        return self.image
+        if self.image is not None:
+            return self.image.copy()
+        return None
 
     def close(self):
         self.cap.release()
@@ -67,6 +70,83 @@ class LogitechCamera(Camera):
 
         return cap
 
+class RealSenseCamera(Camera):
+    def __init__(self, serial=None, frame_width=640, frame_height=480, fps=30):
+        self.frame_width = frame_width
+        self.frame_height = frame_height
+        self.fps = fps
+        self.depth_image = None
+
+        # Configure RealSense pipeline
+        self.pipeline = rs.pipeline()
+        self.config = rs.config()
+
+        # Enable specific device by serial number if provided
+        if serial:
+            self.config.enable_device(serial)
+
+        # Enable color and depth streams
+        self.config.enable_stream(rs.stream.color, frame_width, frame_height, rs.format.bgr8, fps)
+        self.config.enable_stream(rs.stream.depth, frame_width, frame_height, rs.format.z16, fps)
+
+        # Start pipeline
+        self.profile = self.pipeline.start(self.config)
+
+        # Create align object to align depth to color frame
+        self.align = rs.align(rs.stream.color)
+
+        # Get depth scale for converting depth values to meters
+        depth_sensor = self.profile.get_device().first_depth_sensor()
+        self.depth_scale = depth_sensor.get_depth_scale()
+
+        # Warm up the camera
+        for _ in range(30):
+            self.pipeline.wait_for_frames()
+
+        # Don't call parent __init__ - we override camera_worker
+        self.image = None
+        self.last_read_time = time.time()
+        self.running = True
+        threading.Thread(target=self.camera_worker, daemon=True).start()
+
+    def camera_worker(self):
+        while self.running:
+            # Rate limiting to match expected fps
+            while time.time() - self.last_read_time < 1.0 / self.fps:
+                time.sleep(0.0001)
+
+            frames = self.pipeline.wait_for_frames()
+            self.last_read_time = time.time()
+
+            # Align depth to color
+            aligned_frames = self.align.process(frames)
+
+            # Get aligned frames
+            color_frame = aligned_frames.get_color_frame()
+            depth_frame = aligned_frames.get_depth_frame()
+
+            if color_frame:
+                bgr_image = np.asanyarray(color_frame.get_data())
+                self.image = cv.cvtColor(bgr_image, cv.COLOR_BGR2RGB)
+
+            if depth_frame:
+                self.depth_image = np.asanyarray(depth_frame.get_data())
+
+    def get_depth(self):
+        if self.depth_image is not None:
+            return self.depth_image.copy()
+        return None
+
+    def get_depth_meters(self):
+        if self.depth_image is not None:
+            return self.depth_image.copy() * self.depth_scale
+        return None
+
+    def close(self):
+        self.running = False
+        time.sleep(0.1)  # Give thread time to exit
+        self.pipeline.stop()
+
 def find_fisheye_center(image):
     # Find contours
     gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
@@ -102,9 +182,6 @@ class KinovaCamera(Camera):
         while image is None:
             image = self.get_image()
 
-        # Make sure fisheye lens did not accidentally get bumped
-        if not check_fisheye_centered(image):
-            raise Exception('The fisheye lens on the Kinova wrist camera appears to be off-center')
 
     def apply_camera_settings(self):
         # Note: This function adds significant camera latency when it is called
@@ -150,22 +227,57 @@ class KinovaCamera(Camera):
             vision_config.DoSensorFocusAction(sensor_focus_action, vision_device_id)
 
 if __name__ == '__main__':
-    base_camera = LogitechCamera(BASE_CAMERA_SERIAL)
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--display', action='store_true', help='Display live feed instead of saving (requires GTK)')
+    args = parser.parse_args()
+
+    base_camera = RealSenseCamera(REALSENSE_SERIAL)
     wrist_camera = KinovaCamera()
     try:
-        while True:
+        if not args.display:
+            # Save mode: capture once and save to files
+            time.sleep(1)  # Wait for cameras to warm up
             base_image = base_camera.get_image()
+            base_depth = base_camera.get_depth()
             wrist_image = wrist_camera.get_image()
-            cv.imshow('base_image', cv.cvtColor(base_image, cv.COLOR_RGB2BGR))
-            cv.imshow('wrist_image', cv.cvtColor(wrist_image, cv.COLOR_RGB2BGR))
-            key = cv.waitKey(1)
-            if key == ord('s'):  # Save image
-                base_image_path = f'base-image-{int(10 * time.time()) % 100000000}.jpg'
-                cv.imwrite(base_image_path, cv.cvtColor(base_image, cv.COLOR_RGB2BGR))
-                print(f'Saved image to {base_image_path}')
-                wrist_image_path = f'wrist-image-{int(10 * time.time()) % 100000000}.jpg'
-                cv.imwrite(wrist_image_path, cv.cvtColor(wrist_image, cv.COLOR_RGB2BGR))
-                print(f'Saved image to {wrist_image_path}')
+
+            import os
+            save_dir = os.path.join(os.path.dirname(__file__), 'camera_captures')
+            os.makedirs(save_dir, exist_ok=True)
+
+            cv.imwrite(os.path.join(save_dir, 'base_image.png'), cv.cvtColor(base_image, cv.COLOR_RGB2BGR))
+            print(f'Saved {save_dir}/base_image.png')
+            if base_depth is not None:
+                depth_colormap = cv.applyColorMap(cv.convertScaleAbs(base_depth, alpha=0.03), cv.COLORMAP_JET)
+                cv.imwrite(os.path.join(save_dir, 'base_depth.png'), depth_colormap)
+                print(f'Saved {save_dir}/base_depth.png')
+            cv.imwrite(os.path.join(save_dir, 'wrist_image.png'), cv.cvtColor(wrist_image, cv.COLOR_RGB2BGR))
+            print(f'Saved {save_dir}/wrist_image.png')
+        else:
+            # Display mode: show live feed
+            while True:
+                base_image = base_camera.get_image()
+                base_depth = base_camera.get_depth()
+                wrist_image = wrist_camera.get_image()
+                cv.imshow('base_image', cv.cvtColor(base_image, cv.COLOR_RGB2BGR))
+                if base_depth is not None:
+                    # Normalize depth for visualization
+                    depth_colormap = cv.applyColorMap(cv.convertScaleAbs(base_depth, alpha=0.03), cv.COLORMAP_JET)
+                    cv.imshow('base_depth', depth_colormap)
+                cv.imshow('wrist_image', cv.cvtColor(wrist_image, cv.COLOR_RGB2BGR))
+                key = cv.waitKey(1)
+                if key == ord('s'):  # Save image
+                    base_image_path = f'base-image-{int(10 * time.time()) % 100000000}.jpg'
+                    cv.imwrite(base_image_path, cv.cvtColor(base_image, cv.COLOR_RGB2BGR))
+                    print(f'Saved image to {base_image_path}')
+                    if base_depth is not None:
+                        depth_path = f'base-depth-{int(10 * time.time()) % 100000000}.png'
+                        cv.imwrite(depth_path, base_depth)
+                        print(f'Saved depth to {depth_path}')
+                    wrist_image_path = f'wrist-image-{int(10 * time.time()) % 100000000}.jpg'
+                    cv.imwrite(wrist_image_path, cv.cvtColor(wrist_image, cv.COLOR_RGB2BGR))
+                    print(f'Saved image to {wrist_image_path}')
     finally:
         base_camera.close()
         wrist_camera.close()

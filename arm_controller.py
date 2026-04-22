@@ -49,8 +49,6 @@ class JointCompliantController:
         self.otg_out = None
         self.otg_res = None
 
-        # self.data = []
-
     def control_callback(self, arm):
         # Initialize variables on first call
         if self.q_s is None:
@@ -101,18 +99,6 @@ class JointCompliantController:
             self.q_d[:] = self.otg_out.new_position
             self.dq_d[:] = self.otg_out.new_velocity
 
-        # self.data.append({
-        #     'timestamp': time.time(),
-        #     'q_s': self.q_s.tolist(),
-        #     'dq_s': dq_s.tolist(),
-        #     'q_d': self.q_d.tolist(),
-        #     'dq_d': self.dq_d.tolist(),
-        #     'target_position': self.otg_inp.target_position,
-        #     'target_velocity': self.otg_inp.target_velocity,
-        #     'new_position': self.otg_out.new_position,
-        #     'new_velocity': self.otg_out.new_velocity,
-        # })
-
         # Compute joint torque for task
         g = arm.gravity()
         tau_task = -K_p @ (self.q_n - self.q_d) - K_d @ (self.dq_n - self.dq_d) + g
@@ -130,13 +116,13 @@ class JointCompliantController:
 
         return tau_c, self.gripper_pos
 
+
 def command_loop_retract(command_queue, stop_event):
-    # qpos = np.array([0.0, 0.26179939, 3.14159265, -2.26892803, 0.0, 0.95993109, 1.57079633])  # Home
     qpos = np.array([0.0, -0.34906585, 3.14159265, -2.54818071, 0.0, -0.87266463, 1.57079633])
     gripper_pos = 0
     while not stop_event.is_set():
         command_queue.put((qpos, gripper_pos))
-        time.sleep(POLICY_CONTROL_PERIOD)  # Note: Not precise
+        time.sleep(POLICY_CONTROL_PERIOD)
 
 def command_loop_circle(arm, command_queue, stop_event):
     from ik_solver import IKSolver
@@ -156,7 +142,7 @@ def command_loop_circle(arm, command_queue, stop_event):
         for pos in points:
             qpos = ik_solver.solve(pos, quat, arm.q)
             command_queue.put((qpos, gripper_pos))
-            time.sleep(POLICY_CONTROL_PERIOD)  # Note: Not precise
+            time.sleep(POLICY_CONTROL_PERIOD)
 
 if __name__ == '__main__':
     import queue
@@ -166,7 +152,6 @@ if __name__ == '__main__':
     controller = JointCompliantController(command_queue)
     stop_event = threading.Event()
     thread = threading.Thread(target=command_loop_retract, args=(command_queue, stop_event), daemon=True)
-    # thread = threading.Thread(target=command_loop_circle, args=(arm, command_queue, stop_event), daemon=True)
     thread.start()
     arm.init_cyclic(controller.control_callback)
     try:
@@ -175,11 +160,6 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         stop_event.set()
         thread.join()
-        time.sleep(0.5)  # Wait for arm to stop moving
+        time.sleep(0.5)
         arm.stop_cyclic()
         arm.disconnect()
-        # import pickle
-        # output_path = 'controller-states.pkl'
-        # with open(output_path, 'wb') as f:
-        #     pickle.dump(controller.data, f)
-        # print(f'Data saved to {output_path}')

@@ -4,9 +4,11 @@
 import argparse
 import time
 from itertools import count
+from pathlib import Path
 from constants import POLICY_CONTROL_PERIOD
 from episode_storage import EpisodeWriter
 from policies import TeleopPolicy, RemotePolicy
+from state_logger import StateLogger
 
 def should_save_episode(writer):
     if len(writer) == 0:
@@ -23,7 +25,7 @@ def should_save_episode(writer):
             return False
         print('Invalid response')
 
-def run_episode(env, policy, writer=None):
+def run_episode(env, policy, writer=None, state_logger=None):
     # Reset the env
     print('Resetting env...')
     env.reset()
@@ -44,6 +46,10 @@ def run_episode(env, policy, writer=None):
 
         # Get latest observation
         obs = env.get_obs()
+
+        # Log state if logger is active
+        if state_logger is not None and not episode_ended:
+            state_logger.log(obs)
 
         # Get action
         action = policy.step(obs)
@@ -97,10 +103,20 @@ def main(args):
     else:
         policy = RemotePolicy()
 
+    # Create state log directory inside output directory
+    state_log_dir = Path(args.output_dir) / 'state_logs' if args.log_state else None
+    if state_log_dir:
+        state_log_dir.mkdir(parents=True, exist_ok=True)
+
     try:
         while True:
             writer = EpisodeWriter(args.output_dir) if args.save else None
-            run_episode(env, policy, writer)
+            state_logger = StateLogger(log_dir=state_log_dir) if args.log_state else None
+
+            run_episode(env, policy, writer, state_logger)
+
+            if state_logger is not None:
+                state_logger.close()
     finally:
         env.close()
 
@@ -109,6 +125,7 @@ if __name__ == '__main__':
     parser.add_argument('--sim', action='store_true')
     parser.add_argument('--teleop', action='store_true')
     parser.add_argument('--save', action='store_true')
+    parser.add_argument('--log-state', action='store_true', help='Log arm and base state to CSV')
     parser.add_argument('--no-cameras', action='store_true', help='Disable cameras (real env only)')
     parser.add_argument('--output-dir', default='data/demos')
     main(parser.parse_args())
